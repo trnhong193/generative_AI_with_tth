@@ -8,13 +8,27 @@ class InputEmbedding(nn.Module):
         self.d_model = d_model
         self.vocab_size = vocab_size
         self.embedding = nn.Embedding(vocab_size, d_model)
-        # create a table to search embbedings with vocab size rows and each embedding has size: d_model 
+        # create a table to search embbedings with vocab size rows and each embedding has size: d_model (columns)
 
     def forward(self,x):
+        """
+        Forward pass to convert input token indices into dense, scaled embeddings.
+
+        Args:
+            x (torch.Tensor): Input tensor of token indices with shape (batch_size, sequence_length).
+
+        Returns:
+            torch.Tensor: Tensor of shape (batch_size, sequence_length, d_model)
+                          containing the scaled embeddings.
+        """
         x = self.embedding(x) * math.sqrt(self.d_model)
         
     
 class PositionalEncoding(nn.Module):
+    """
+    Positional Encoding module to add positional information to the input embeddings.
+    as transfomer dont have sequence structure as RNN
+    """
     def __init__(self, d_model: int, seq_len: int, dropout: float) -> None:
         super().__init__()
         self.d_model  = d_model
@@ -31,15 +45,19 @@ class PositionalEncoding(nn.Module):
         pe[:, 1::2] = torch.cos(position * div_term)
         pe = pe.unsqueeze(0)  # (1, seq_len, d_model)
 
-        self.register_buffer('pe', pe)  # register as buffer so it won't be considered a model parameter
+        self.register_buffer('pe', pe)  # register as buffer - constant in model, not a model parameter
 
     def forward(self, x):
             x = x + self.pe[:, :x.size(1), :].detach()
             return self.dropout(x)
 
 class LayerNormalization(nn.Module):
+    """
+    Layer Normalization module to normalize the input tensor.
+    chuẩn hóa input theo từng vector embedding - theo trục d_model
+    """
     def __init__(self, eps = 10**-6) ->  None:
-        super().__init()
+        super().__init__()
         self.eps = eps
         self.alpha = nn.Parameter(torch.ones(1)) # Multiplied
         self.bias = nn.Parameter(torch.zeros(1)) #Added
@@ -51,6 +69,10 @@ class LayerNormalization(nn.Module):
         return self.alpha * x + self.bias
     
 class FeedForwardBlock(nn.Module):
+    """
+    Một mạng FC gồm 2 lớp nằm giữa các lớp attention
+    Linear(d_model → d_ff) → ReLU → Dropout → Linear(d_ff → d_model).
+    """
     def __init__(self, d_model: int, d_ff: int, dropout: float) -> None: 
         # d_ff: dim of hidden layer, d_model: dim of input
         super().__init__()
@@ -156,11 +178,11 @@ class DecoderBlock(nn.Module):
         self.feed_forward_block = feed_forward_block
         self.residual_connection = nn.ModuleList([ResidualConnection(dropout) for _ in range(3)])
 
-        def  forward(self, x, encoder_output, src_mask, tgt_mask):
-            x = self.residual_connection[0](x, lambda x: self.self_attention_block(x, x, x, tgt_mask))
-            x = self.residual_connection[1](x, lambda x: self.cross_attention_block(x, encoder_output, encoder_output, src_mask))
-            x = self.residual_connection[2](x, self.feed_forward_block)
-            return x 
+    def  forward(self, x, encoder_output, src_mask, tgt_mask):
+        x = self.residual_connection[0](x, lambda x: self.self_attention_block(x, x, x, tgt_mask))
+        x = self.residual_connection[1](x, lambda x: self.cross_attention_block(x, encoder_output, encoder_output, src_mask))
+        x = self.residual_connection[2](x, self.feed_forward_block)
+        return x 
 
 class Decoder(nn.Module):
     def __init__(self, layers: nn.ModuleList):
@@ -168,6 +190,28 @@ class Decoder(nn.Module):
         self.layers = layers
         self.norm = LayerNormalization()
     def forward(self, x, encoder_output, src_mask, tgt_mask):
-        for layer in self.layers:
+        for layer in self.layers: # layer - DecoderBlock
             x = layer(x, encoder_output, src_mask, tgt_mask)
-        return self.norm(x)           
+        return self.norm(x)     
+
+class ProjectionLayer(nn.Module):
+    def __init__(self, d_model: int, vocab_size: int) -> None:
+        super().__init__()
+        self.linear = nn.Linear(d_model, vocab_size)   # prj 
+        self.softmax = nn.LogSoftmax(dim=-1) # dim = -1: last dim
+    def forward(self, x):
+        # (Batch, seq_len, d_model) -> (Batch, seq_len, vocab_size)
+        x = self.linear(x)
+        return self.softmax(x)
+    
+
+class Transfomer(nn.Module):
+    def __init__(self, encoder: Encoder, decoder: Decoder, src_emb: InputEmbedding, tgt_emb: InputEmbedding, projection_layer: ProjectionLayer, src_pos: PositionalEncoding, tgt_pos: PositionalEncoding)
+        super().__init__()
+        self.encoder = encoder
+        self.decoder = decoder
+        self.src_emb = src_emb
+        self.tgt_emb = tgt_emb
+        self.projection_layer = projection_layer
+        self.src_pos = src_pos
+        self.tgt_pos = tgt_pos
